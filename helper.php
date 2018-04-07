@@ -1,86 +1,102 @@
 <?php
 /**
  * @author Yireo
- * @copyright Copyright 2015 Yireo
+ * @copyright Copyright 2018 Yireo
  * @license GNU/GPL
- * @link http://www.yireo.com/
-*/
+ * @link https://www.yireo.com/
+ */
+declare(strict_types=1);
+
+namespace Yireo\ModuleGithubRepos;
 
 // No direct access
+use Github\Client as GithubClient;
+use Joomla\Registry\Registry;
+
 defined('_JEXEC') or die('Restricted access');
 
 /*
  * Helper class
  */
-class modGithubReposHelper
+
+class Helper
 {
+    /** @var Registry */
+    private $params;
+
+    /**
+     * Helper constructor.
+     * @param Registry $params
+     */
+    public function __construct(Registry $params)
+    {
+        $this->params = $params;
+    }
+
     /*
      * Method to get the feed-data
+     *
+     * @return array
      */
-	static public function getData(&$params)
-	{
+    public function getRepositories(): array
+    {
         // Fetch the remote lines
-        $result = self::getRemoteData($params);
-        $rows = json_decode($result, true);
-        if(empty($rows)) {
-            return null;
+        $repositories = $this->getRemoteData();
+        if (empty($repositories)) {
+            return [];
         }
 
         // Parse the lines
-        foreach($rows as $rowId => $row) {
-    
-            if($row['fork'] == 1 && $params->get('skip_forks', 1)) {
-                unset($rows[$rowId]);
+        foreach ($repositories as $repositoryId => $repository) {
+            if ($this->showRepository($repository)) {
+                unset($repositories[$repositoryId]);
                 continue;
-            }            
+            }
 
-            $rows[$rowId] = $row;
+            $repositories[$repositoryId] = $repository;
         }
 
-        return $rows;
+        return $repositories;
     }
 
-    /*
-     * Method to get the remote data
+    /**
+     * @param array $repository
+     * @return bool
      */
-	static public function getRemoteData(&$params)
-	{
+    private function showRepository(array $repository)
+    {
+        if ((int)$repository['fork'] === 1 &&
+(bool)$this->params->get('skip_forks', 1)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * @return array
+     */
+    private function getRemoteData(): array
+    {
         // Construct the remote URL from the parameters
-        $user = $params->get('user');
-        $clientId = $params->get('client_id');
-        $clientSecret = $params->get('client_secret');
-        $url = 'https://api.github.com/users/'.$user.'/repos?client_id='.$clientId.'&client_secret='.$clientSecret;
+        $user = $this->params->get('user');
+        $client = $this->getGithubClient();
+        $repositories = $client->api('user')->repositories($user);
+        return $repositories;
+    }
 
-        // Check for feed-caching
-        if($params->get('owncache', 1) == 1) {
-            $cacheDir = JPATH_SITE.'/cache/mod_github_repos/';
-            if(!is_dir($cacheDir)) @mkdir($cacheDir);
-            $cacheFile = $cacheDir.md5($url).'.json';
-            $cacheExpiry = (60 * 60 * 4);
+    /**
+     * @return GithubClient
+     */
+    private function getGithubClient(): GithubClient
+    {
+        require_once JPATH_ROOT . '/vendor/autoload.php';
+        $client = new GithubClient();
 
-            if(file_exists($cacheFile) && time() - filemtime($cacheFile) < $cacheExpiry) {
-                $result = file_get_contents($cacheFile);
-                if(!empty($result)) {
-                    return $result;
-                }
-            }
-        }
-
-        // Fetch the remote content using CURL
-        $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL, $url);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1) ;
-        curl_setopt($ch, CURLOPT_HEADER, 0);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, 0);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
-        curl_setopt($ch, CURLOPT_USERAGENT, 'mod_github_repos [Joomla!] (by yireo.com)');
-        $result = curl_exec($ch);
-
-        // If feed-caching is enabled, dump to the cache
-        if($params->get('owncache', 1) == 1) {
-            @file_put_contents($cacheFile, $result);
-        }
-
-        return $result;
+        $accessToken = $this->params->get('access_token');
+        $client->authenticate($accessToken,
+GithubClient::AUTH_URL_TOKEN);
+        return $client;
     }
 }
+
